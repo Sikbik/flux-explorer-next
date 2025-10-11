@@ -25,6 +25,7 @@ import {
   ArrowUpCircle,
   ArrowDownCircle,
   Clock,
+  X,
 } from "lucide-react";
 import { format } from "date-fns";
 
@@ -33,11 +34,16 @@ interface AddressTransactionsProps {
 }
 
 const ITEMS_PER_PAGE = 25;
+const MAX_TRANSACTIONS_PER_FILE = 50000; // Split large exports into 50k transaction files
+const API_REQUEST_DELAY_MS = 100; // 100ms delay between API requests to prevent flooding
 
 export function AddressTransactions({ addressInfo }: AddressTransactionsProps) {
   const [currentPage, setCurrentPage] = useState(0);
   const [isExporting, setIsExporting] = useState(false);
   const [pageInput, setPageInput] = useState("");
+  const [exportProgress, setExportProgress] = useState(0);
+  const [exportStatus, setExportStatus] = useState("");
+  const [abortController, setAbortController] = useState<AbortController | null>(null);
 
   const from = currentPage * ITEMS_PER_PAGE;
   const to = from + ITEMS_PER_PAGE;
@@ -54,68 +60,127 @@ export function AddressTransactions({ addressInfo }: AddressTransactionsProps) {
   const handleExportCSV = async () => {
     if (!transactions.length) return;
 
+    // Validate total transactions (safety check)
+    const safeTotal = Math.max(0, totalTransactions);
+    if (safeTotal === 0) return;
+
+    // Calculate number of files needed
+    const numFiles = Math.ceil(safeTotal / MAX_TRANSACTIONS_PER_FILE);
+    const willSplit = numFiles > 1;
+
     // Show warning for large exports
-    if (totalTransactions > 1000) {
-      const confirmed = window.confirm(
-        `This will export ${totalTransactions.toLocaleString()} transactions. This may take a while. Continue?`
-      );
+    if (safeTotal > 1000) {
+      const message = willSplit
+        ? `This will export ${safeTotal.toLocaleString()} transactions split into ${numFiles} files (${MAX_TRANSACTIONS_PER_FILE.toLocaleString()} transactions each). This may take a while. Continue?`
+        : `This will export ${safeTotal.toLocaleString()} transactions. This may take a while. Continue?`;
+
+      const confirmed = window.confirm(message);
       if (!confirmed) return;
     }
 
+    // Create abort controller for cancellation
+    const controller = new AbortController();
+    setAbortController(controller);
     setIsExporting(true);
+    setExportProgress(0);
+    setExportStatus("Preparing export...");
 
     try {
       // For small number of transactions, use current page only
-      if (totalTransactions <= ITEMS_PER_PAGE) {
-        exportTransactionsToCSV(transactions);
+      if (safeTotal <= ITEMS_PER_PAGE) {
+        setExportStatus("Generating CSV...");
+        exportTransactionsToCSV(transactions, 1, 1);
         return;
       }
 
       // For large number of transactions, fetch all in batches
       const { InsightAPI } = await import("@/lib/api/client");
-      const allTransactions: Transaction[] = [];
       const batchSize = 100; // Fetch 100 transactions at a time
 
-      // Show progress
-      const totalBatches = Math.ceil(totalTransactions / batchSize);
-      let currentBatch = 0;
+      // Process each file segment
+      for (let fileNum = 0; fileNum < numFiles; fileNum++) {
+        // Check if user cancelled
+        if (controller.signal.aborted) {
+          throw new Error("Export cancelled by user");
+        }
 
-      for (let offset = 0; offset < totalTransactions; offset += batchSize) {
-        currentBatch++;
-        console.log(`Fetching batch ${currentBatch}/${totalBatches}...`);
+        const fileStart = fileNum * MAX_TRANSACTIONS_PER_FILE;
+        const fileEnd = Math.min(fileStart + MAX_TRANSACTIONS_PER_FILE, safeTotal);
+        const fileTransactions: Transaction[] = [];
 
-        const data = await InsightAPI.getAddressTransactions(
-          [addressInfo.addrStr],
-          { from: offset, to: offset + batchSize }
-        );
+        setExportStatus(`Processing file ${fileNum + 1} of ${numFiles}...`);
 
-        if (data.items) {
-          allTransactions.push(...data.items);
+        // Fetch transactions for this file segment
+        for (let offset = fileStart; offset < fileEnd; offset += batchSize) {
+          // Check if user cancelled
+          if (controller.signal.aborted) {
+            throw new Error("Export cancelled by user");
+          }
+
+          const fetchedCount = Math.min(offset + batchSize, safeTotal);
+          const progressPercent = Math.round((fetchedCount / safeTotal) * 100);
+
+          setExportProgress(progressPercent);
+          setExportStatus(`Fetching transactions: ${fetchedCount.toLocaleString()} / ${safeTotal.toLocaleString()} (File ${fileNum + 1}/${numFiles})`);
+
+          const data = await InsightAPI.getAddressTransactions(
+            [addressInfo.addrStr],
+            { from: offset, to: offset + batchSize }
+          );
+
+          if (data.items) {
+            fileTransactions.push(...data.items);
+          }
+
+          // Rate limiting: Add delay between requests (except last one in file)
+          if (offset + batchSize < fileEnd) {
+            await new Promise(resolve => setTimeout(resolve, API_REQUEST_DELAY_MS));
+          }
+        }
+
+        // Generate CSV for this file segment
+        setExportStatus(`Generating CSV file ${fileNum + 1} of ${numFiles}...`);
+        exportTransactionsToCSV(fileTransactions, fileNum + 1, numFiles);
+
+        // Small delay between files
+        if (fileNum < numFiles - 1) {
+          await new Promise(resolve => setTimeout(resolve, 200));
         }
       }
 
-      exportTransactionsToCSV(allTransactions);
+      setExportStatus("Export complete!");
+      await new Promise(resolve => setTimeout(resolve, 1000));
     } catch (error) {
       console.error("Export failed:", error);
-      alert("Failed to export transactions. Please try again.");
+      if (error instanceof Error && error.message === "Export cancelled by user") {
+        alert("Export cancelled.");
+      } else {
+        alert("Failed to export transactions. Please try again.");
+      }
     } finally {
       setIsExporting(false);
+      setExportProgress(0);
+      setExportStatus("");
+      setAbortController(null);
     }
   };
 
-  const exportTransactionsToCSV = (txs: Transaction[]) => {
+  const exportTransactionsToCSV = (txs: Transaction[], fileNum: number = 1, totalFiles: number = 1) => {
     if (!txs.length) return;
 
-    // CSV Headers
+    // Universal CSV format for crypto tax software
+    // Compatible with: Koinly, CoinTracker, CryptoTaxCalculator, TokenTax
     const headers = [
       "Date",
-      "Time",
-      "Transaction ID",
       "Type",
-      "Amount (FLUX)",
-      "Balance Change (FLUX)",
-      "Confirmations",
+      "Amount",
+      "Currency",
+      "TxHash",
       "Block Height",
+      "Confirmations",
+      "From Address",
+      "To Address",
+      "Notes",
     ];
 
     // CSV Rows
@@ -126,57 +191,146 @@ export function AddressTransactions({ addressInfo }: AddressTransactionsProps) {
       );
       const isSent = tx.vin.some((input: TransactionInput) => input.addr === addressInfo.addrStr);
 
-      // Calculate amount for this address
-      let amount = 0;
+      // Calculate amounts for this address
+      let receivedAmount = 0;
+      let sentAmount = 0;
+      const toAddresses: string[] = [];
+      const fromAddresses: string[] = [];
+
       if (isReceived) {
         tx.vout.forEach((out: TransactionOutput) => {
           if (out.scriptPubKey.addresses?.includes(addressInfo.addrStr)) {
-            amount += parseFloat(out.value);
+            const value = parseFloat(out.value);
+            // Validate: skip NaN, Infinity, and negative values
+            if (isFinite(value) && value >= 0) {
+              receivedAmount += value;
+            }
           }
         });
       }
+
       if (isSent) {
         tx.vin.forEach((input: TransactionInput) => {
           if (input.addr === addressInfo.addrStr) {
-            amount -= input.value;
+            // Validate: skip NaN, Infinity, and negative values
+            if (isFinite(input.value) && input.value >= 0) {
+              sentAmount += input.value;
+            }
           }
         });
       }
 
-      // Determine transaction type based on net amount
+      // Collect ALL input addresses (for determining source of received funds)
+      tx.vin.forEach((input: TransactionInput) => {
+        if (input.addr && !fromAddresses.includes(input.addr) && input.addr !== addressInfo.addrStr) {
+          fromAddresses.push(input.addr);
+        }
+      });
+
+      // Get unique to addresses (excluding current address)
+      tx.vout.forEach((out: TransactionOutput) => {
+        out.scriptPubKey.addresses?.forEach((addr) => {
+          if (!toAddresses.includes(addr) && addr !== addressInfo.addrStr) {
+            toAddresses.push(addr);
+          }
+        });
+      });
+
+      const netAmount = receivedAmount - sentAmount;
+
+      // Determine transaction type and amount to record
       let txType: string;
-      if (isReceived && isSent && Math.abs(amount) < 0.00001) {
-        txType = "Self";
-      } else if (amount > 0) {
-        txType = "Received";
+      let amount: number;
+      let notes = "";
+      let fromAddr = "";
+      let toAddr = "";
+
+      // Simplified logic: just Receive or Send based on net amount
+      if (netAmount > 0) {
+        // Net positive = Received money
+        txType = "Receive";
+        amount = netAmount;
+        fromAddr = fromAddresses.length > 0 ? fromAddresses[0] : "Coinbase";
+        toAddr = addressInfo.addrStr;
+
+        // Add helpful note for FluxNode rewards
+        if (fromAddr === "Coinbase") {
+          if (amount === 2.8125) {
+            notes = "FluxNode Reward - CUMULUS";
+          } else if (amount === 4.6875) {
+            notes = "FluxNode Reward - NIMBUS";
+          } else if (amount === 11.25) {
+            notes = "FluxNode Reward - STRATUS";
+          } else {
+            notes = "Block Reward";
+          }
+        }
+      } else if (netAmount < 0) {
+        // Net negative = Sent money (includes change transactions)
+        txType = "Send";
+        amount = Math.abs(netAmount);
+        fromAddr = addressInfo.addrStr;
+        toAddr = toAddresses.length > 0 ? toAddresses[0] : "";
       } else {
-        txType = "Sent";
+        // Net zero = No economic impact (likely dust or self-transfer)
+        txType = "Send";
+        amount = 0;
+        notes = "No net change";
+        fromAddr = addressInfo.addrStr;
+        toAddr = addressInfo.addrStr;
       }
 
       return [
-        format(date, "yyyy-MM-dd"),
-        format(date, "HH:mm:ss"),
-        tx.txid,
+        format(date, "yyyy-MM-dd HH:mm:ss"),
         txType,
-        tx.valueOut.toFixed(8),
         amount.toFixed(8),
-        tx.confirmations,
+        "FLUX",
+        tx.txid,
         tx.blockheight || "Pending",
+        tx.confirmations.toString(),
+        fromAddr,
+        toAddr,
+        notes || "", // Leave empty if no specific note
       ];
     });
 
-    // Create CSV content
+    // Helper function to properly escape CSV cells (RFC 4180 + Formula Injection Prevention)
+    const escapeCSVCell = (cell: string | number): string => {
+      const strCell = String(cell);
+
+      // Prevent CSV Formula Injection: escape cells starting with = + - @ (Excel formula triggers)
+      const startsWithDangerousChar = /^[=+\-@]/.test(strCell);
+      let escapedCell = startsWithDangerousChar ? `'${strCell}` : strCell;
+
+      // RFC 4180: Escape double quotes by doubling them
+      escapedCell = escapedCell.replace(/"/g, '""');
+
+      // RFC 4180: Wrap in quotes if contains comma, newline, or quote
+      if (escapedCell.includes(',') || escapedCell.includes('\n') || escapedCell.includes('"') || startsWithDangerousChar) {
+        return `"${escapedCell}"`;
+      }
+
+      return escapedCell;
+    };
+
+    // Create CSV content with proper escaping
     const csvContent = [
       headers.join(","),
-      ...rows.map((row) => row.map((cell) => `"${cell}"`).join(",")),
+      ...rows.map((row) => row.map(escapeCSVCell).join(",")),
     ].join("\n");
 
-    // Download
+    // Download with proper filename
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `flux-address-${addressInfo.addrStr.slice(0, 8)}-transactions.csv`;
+
+    // Generate filename: add part number if multiple files
+    const filename = totalFiles > 1
+      ? `flux-address-${addressInfo.addrStr}-part${fileNum}of${totalFiles}.csv`
+      : `flux-address-${addressInfo.addrStr}.csv`;
+
+    link.download = filename;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -257,6 +411,7 @@ export function AddressTransactions({ addressInfo }: AddressTransactionsProps) {
               onClick={handleExportCSV}
               disabled={!transactions.length || isExporting}
               className="gap-2"
+              title="Export CSV for tax reporting (compatible with Koinly, CoinTracker, etc.)"
             >
               <Download className="h-4 w-4" />
               {isExporting ? "Exporting..." : "Export CSV"}
@@ -281,6 +436,37 @@ export function AddressTransactions({ addressInfo }: AddressTransactionsProps) {
         </p>
       </CardHeader>
       <CardContent>
+        {/* Export Progress Bar */}
+        {isExporting && exportStatus && (
+          <div className="mb-6 p-4 border rounded-lg bg-muted/30">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm gap-4">
+                <span className="font-medium flex-1">{exportStatus}</span>
+                <div className="flex items-center gap-3">
+                  <span className="text-muted-foreground">{exportProgress}%</span>
+                  {abortController && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => abortController.abort()}
+                      className="h-6 w-6 p-0 hover:bg-destructive/10 hover:text-destructive"
+                      title="Cancel export"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
+              </div>
+              <div className="w-full bg-secondary rounded-full h-2.5 overflow-hidden">
+                <div
+                  className="bg-primary h-2.5 rounded-full transition-all duration-300 ease-out"
+                  style={{ width: `${exportProgress}%` }}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
         {isLoading ? (
           <div className="text-center py-8">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>

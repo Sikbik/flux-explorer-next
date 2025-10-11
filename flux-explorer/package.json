@@ -1,6 +1,29 @@
 {
   "name": "flux-explorer",
   "version": "1.0.0",
+  "description": "Modern blockchain explorer for the Flux network with CSV tax export support",
+  "author": "Sikbik",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Sikbik/flux-explorer-next.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Sikbik/flux-explorer-next/issues"
+  },
+  "homepage": "https://github.com/Sikbik/flux-explorer-next#readme",
+  "keywords": [
+    "flux",
+    "blockchain",
+    "explorer",
+    "cryptocurrency",
+    "nextjs",
+    "typescript",
+    "blockbook",
+    "fluxnode",
+    "csv-export",
+    "tax-reporting"
+  ],
   "private": true,
   "scripts": {
     "dev": "next dev",

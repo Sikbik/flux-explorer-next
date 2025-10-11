@@ -76,7 +76,6 @@ flux_explorer/
 │   │   ├── types/             # TypeScript definitions
 │   │   └── hooks/             # Custom React hooks
 │   └── public/                # Static assets
-├── ROADMAP.md                 # Development roadmap
 └── README.md                  # This file
 ```
 

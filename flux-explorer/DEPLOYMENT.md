@@ -3,44 +3,53 @@
 Complete guide for deploying Flux Explorer on the Flux network.
 
 **Production Status:** ✅ READY TO DEPLOY
-**Security Audit:** PASSED (Score: 9.5/10)
+**Security Audit:** PASSED - All critical vulnerabilities resolved
 **Last Updated:** October 11, 2025
+**Version:** 1.0.0
 
 ## Table of Contents
 - [Pre-Deployment Checklist](#pre-deployment-checklist)
 - [Resource Requirements](#resource-requirements)
 - [Local Testing](#local-testing)
 - [Building for Production](#building-for-production)
-- [Flux Deployment](#flux-deployment)
+- [Flux Deployment Options](#flux-deployment-options)
+  - [Option 1: Standalone Deployment](#option-1-standalone-deployment-public-api)
+  - [Option 2: Multi-Component Deployment](#option-2-multi-component-deployment-local-blockbook)
 - [Monitoring](#monitoring)
 - [Security](#security)
+- [Bootstrap Creation](#bootstrap-creation-optional)
 
 ## Pre-Deployment Checklist
 
 ✅ **Security**
 - Zero CVEs in dependencies
-- Input validation on all API routes
+- CSV injection protection (RFC 4180 + formula injection prevention)
+- Input validation on all API routes (parseFloat validation, regex checks)
 - XSS protection verified
 - No SSRF vulnerabilities
 - Error handling without information leakage
+- API rate limiting implemented (100ms delays)
 
 ✅ **Performance**
 - Optimized caching implemented
 - Server-side API batching active
 - React Query deduplication configured
 - Docker multi-stage build optimized
+- Multi-file CSV export (50k transactions per file)
+- Export cancellation support
 
 ✅ **Quality**
 - TypeScript strict mode enabled
 - All ESLint rules passing
 - Production build tested
 - Health checks implemented
+- CSV export tested with large datasets
 
 ✅ **Documentation**
-- README.md updated
-- DEPLOYMENT.md current
-- CHANGELOG.md created
+- README.md updated with CSV export features
+- DEPLOYMENT.md updated with Flux multi-component guide
 - Environment variables documented
+- Security audit completed
 
 ## Resource Requirements
 
@@ -149,7 +158,12 @@ curl http://localhost:3000
 curl http://localhost:3000/api/health
 ```
 
-## Flux Network Deployment
+## Flux Deployment Options
+
+The Flux Explorer can be deployed in two configurations:
+
+1. **Standalone** - Uses public Blockbook API (simple, quick setup)
+2. **Multi-Component** - Runs local Blockbook for 10-100x better performance
 
 ### Prerequisites
 - Docker Hub account (or other public container registry)
@@ -163,18 +177,13 @@ curl http://localhost:3000/api/health
 
 ```bash
 # Build the image
-docker build -t flux-explorer:v1.0.0 .
-
-# Tag for Docker Hub (replace USERNAME with your Docker Hub username)
-docker tag flux-explorer:v1.0.0 USERNAME/flux-explorer:latest
-docker tag flux-explorer:v1.0.0 USERNAME/flux-explorer:v1.0.0
+docker build -t littlestache/flux-explorer:latest .
 
 # Login to Docker Hub
 docker login
 
 # Push to Docker Hub
-docker push USERNAME/flux-explorer:latest
-docker push USERNAME/flux-explorer:v1.0.0
+docker push littlestache/flux-explorer:latest
 ```
 
 #### 2. Deploy via Flux Marketplace

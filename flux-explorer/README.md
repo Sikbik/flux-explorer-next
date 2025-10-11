@@ -16,6 +16,7 @@ A modern, high-performance blockchain explorer for the Flux network. Built with 
 - 💰 **Transaction Viewer** - Comprehensive transaction details with UTXO tracking
 - 📍 **Address Tracker** - Monitor balances, transaction history with pagination
 - ⛏️ **Mining Rewards** - Live visualization of block rewards and FluxNode payouts
+- 📥 **CSV Export** - Tax-compliant transaction history export with progress tracking
 
 ### FluxNode Features
 - 🏆 **Tier Detection** - Automatic identification of CUMULUS, NIMBUS, STRATUS nodes
@@ -23,12 +24,21 @@ A modern, high-performance blockchain explorer for the Flux network. Built with 
 - 📈 **Tier Statistics** - Breakdown of node confirmations by tier
 - 🎨 **Color-Coded Badges** - Visual distinction of different node tiers
 
+### CSV Export Features
+- 💼 **Tax Software Compatible** - Koinly, CoinTracker, CryptoTaxCalculator, TokenTax
+- 🛡️ **CSV Injection Protection** - RFC 4180 compliant, formula injection prevention
+- 📊 **Progress Tracking** - Real-time progress bar with status and cancellation
+- 📦 **Multi-File Export** - Automatic splitting for large datasets (50k transactions per file)
+- 🎯 **Smart Categorization** - Automatic detection of Receive/Send with FluxNode tier labels
+- ♾️ **Unlimited History** - Export complete transaction history without memory issues
+
 ### Technical Features
-- ⚡ **Optimized Performance** - Aggressive caching, minimal API calls
+- ⚡ **Optimized Performance** - Aggressive caching, minimal API calls, rate limiting
 - 🔄 **Real-time Updates** - Auto-refreshing data with smart polling intervals
 - 📱 **Responsive Design** - Seamless experience on desktop, tablet, and mobile
 - 🔒 **Security Hardened** - Zero vulnerabilities, input validation, XSS protection
 - 🚀 **Production Ready** - Docker-optimized, health checks, monitoring
+- 🌐 **Flexible Deployment** - Public API or local Blockbook support
 
 ## Tech Stack
 
@@ -210,25 +220,53 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for comprehensive deployment instructions inc
 
 | Variable | Description | Default | Required |
 |----------|-------------|---------|----------|
-| `NEXT_PUBLIC_BLOCKBOOK_API_URL` | Blockbook API endpoint | `https://blockbookflux.app.runonflux.io/api/v2` | No |
+| `NEXT_PUBLIC_BLOCKBOOK_API_URL` | Client-side Blockbook API endpoint (build-time) | `https://blockbookflux.app.runonflux.io/api/v2` | No |
+| `BLOCKBOOK_API_URL` | Server-side Blockbook API endpoint (runtime) | Falls back to `NEXT_PUBLIC_BLOCKBOOK_API_URL` | No |
 | `NODE_ENV` | Environment mode | `development` | No |
 | `PORT` | Server port | `3000` | No |
 
-All blockchain data is fetched from the public Blockbook API - no authentication required.
+### API Configuration
+
+The explorer supports flexible API configuration:
+
+**Public API (Default)**
+```env
+# No configuration needed - uses public Blockbook by default
+```
+
+**Local Blockbook (Flux Multi-Component)**
+```env
+BLOCKBOOK_API_URL=http://fluxblockbook_{appname}:9158/api/v2
+```
+
+**Custom Blockbook**
+```env
+BLOCKBOOK_API_URL=https://your-custom-blockbook.com/api/v2
+```
+
+All blockchain data is public - no authentication required.
 
 ## Security
 
-This project has undergone comprehensive security auditing:
+This project has undergone comprehensive security auditing with all critical vulnerabilities addressed:
 
+### Core Security
 - ✅ **Zero CVEs** - All dependencies up-to-date and secure
-- ✅ **Input Validation** - All user inputs sanitized with regex validation
+- ✅ **Input Validation** - All user inputs sanitized with regex validation, numeric bounds checking
 - ✅ **XSS Protection** - React's built-in sanitization, no `dangerouslySetInnerHTML`
 - ✅ **No Injection Risks** - No eval(), no shell execution, no dynamic code
-- ✅ **SSRF Protected** - Hardcoded API URLs, validated user input
+- ✅ **SSRF Protected** - Environment-controlled API URLs, validated user input
 - ✅ **Error Handling** - Generic error messages, no stack trace leakage
 - ✅ **Type Safety** - 100% TypeScript with strict mode
 
-**Security Score: 9.5/10** - See security audit report for details.
+### CSV Export Security
+- ✅ **CSV Injection Prevention** - RFC 4180 compliant escaping
+- ✅ **Formula Injection Protection** - Dangerous characters prefixed with single quote
+- ✅ **DoS Protection** - Multi-file segmentation (50k transactions per file), API rate limiting (100ms delays)
+- ✅ **Memory Safety** - Chunked processing, export cancellation support
+- ✅ **Input Validation** - parseFloat() results validated with isFinite(), negative value rejection
+
+**Security Status: PRODUCTION READY** ✅ - All critical and medium-risk vulnerabilities resolved.
 
 ## API Endpoints
 

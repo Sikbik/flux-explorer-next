@@ -121,9 +121,14 @@ interface BlockbookUtxoResponse {
   confirmations?: number;
 }
 
+// Support both server-side and client-side API URL configuration
+// Server-side (API routes): BLOCKBOOK_API_URL (runtime, for internal component communication)
+// Client-side (browser): NEXT_PUBLIC_BLOCKBOOK_API_URL (build-time)
 const API_BASE_URL =
-  process.env.NEXT_PUBLIC_BLOCKBOOK_API_URL ||
-  "https://blockbookflux.app.runonflux.io/api/v2";
+  (typeof window === 'undefined'
+    ? process.env.BLOCKBOOK_API_URL || process.env.NEXT_PUBLIC_BLOCKBOOK_API_URL
+    : process.env.NEXT_PUBLIC_BLOCKBOOK_API_URL
+  ) || "https://blockbookflux.app.runonflux.io/api/v2";
 
 const apiClient = ky.create({
   prefixUrl: API_BASE_URL,
