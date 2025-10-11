@@ -17,8 +17,35 @@ const geistMono = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "Flux Explorer - Network Monitoring & Analytics",
-  description: "Monitor and analyze the Flux network with real-time insights and metrics",
+  title: "Flux Explorer - Blockchain Explorer for Flux Network",
+  description: "Modern, high-performance blockchain explorer for Flux - Real-time network monitoring, transaction tracking, and FluxNode analytics",
+  keywords: ["flux", "blockchain", "explorer", "cryptocurrency", "fluxnode", "monitoring"],
+  icons: {
+    icon: [
+      { url: "/flux-logo.svg", type: "image/svg+xml" },
+    ],
+    shortcut: "/flux-logo.svg",
+    apple: "/flux-logo.svg",
+  },
+  openGraph: {
+    title: "Flux Explorer - Blockchain Explorer for Flux Network",
+    description: "Modern, high-performance blockchain explorer for Flux - Real-time network monitoring, transaction tracking, and FluxNode analytics",
+    type: "website",
+    images: [
+      {
+        url: "/flux-logo.svg",
+        width: 256,
+        height: 256,
+        alt: "Flux Logo",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary",
+    title: "Flux Explorer",
+    description: "Modern blockchain explorer for Flux network",
+    images: ["/flux-logo.svg"],
+  },
 };
 
 export default function RootLayout({
