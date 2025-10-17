@@ -3,6 +3,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ReactNode, useState } from "react";
 import { parseError } from "@/lib/api/error-handler";
+import "@/lib/api/health-monitor"; // Import to trigger initialization
 
 export function Providers({ children }: { children: ReactNode }) {
   const [queryClient] = useState(

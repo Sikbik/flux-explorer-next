@@ -6,9 +6,6 @@
 // Export the API client
 export { FluxAPI, FluxAPIError } from "./client";
 
-// Legacy exports for backwards compatibility
-export { InsightAPI, InsightAPIError } from "./client";
-
 // Export all hooks
 export * from "./hooks";
 

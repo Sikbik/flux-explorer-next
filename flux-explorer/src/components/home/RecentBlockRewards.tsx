@@ -6,7 +6,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Pickaxe, Coins, ArrowRight } from "lucide-react";
-import { InsightAPI } from "@/lib/api/client";
+import { FluxAPI } from "@/lib/api/client";
+import { getApiConfig } from "@/lib/api/config";
 
 // Tier detection based on reward amounts
 const getTierFromReward = (amount: number): { tier: string; color: string } => {
@@ -21,18 +22,20 @@ const getTierFromReward = (amount: number): { tier: string; color: string } => {
 };
 
 export function RecentBlockRewards() {
+  const config = getApiConfig();
+
   // Fetch latest block and its coinbase transaction
   const { data: blockData, isLoading } = useQuery({
     queryKey: ["recent-block-rewards"],
     queryFn: async () => {
-      const status = await InsightAPI.getStatus();
+      const status = await FluxAPI.getStatus();
       const latestHeight = status.info.blocks;
-      const blockHash = await InsightAPI.getBlockHash(latestHeight);
-      const block = await InsightAPI.getBlock(blockHash);
+      const blockHash = await FluxAPI.getBlockHash(latestHeight);
+      const block = await FluxAPI.getBlock(blockHash);
 
       // Get the coinbase transaction (first tx in block)
       const coinbaseTxid = block.tx[0];
-      const coinbaseTx = await InsightAPI.getTransaction(coinbaseTxid);
+      const coinbaseTx = await FluxAPI.getTransaction(coinbaseTxid);
 
       // Parse outputs to identify FluxNode rewards (filter out 0-value outputs)
       const rewards = coinbaseTx.vout
@@ -55,8 +58,8 @@ export function RecentBlockRewards() {
         totalReward: rewards.reduce((sum, r) => sum + r.amount, 0),
       };
     },
-    refetchInterval: 10000, // Refresh every 10 seconds (synced with LatestBlocks)
-    staleTime: 5000, // Consider data stale after 5 seconds
+    refetchInterval: config.refetchInterval, // Use dynamic interval (3s local, 30s public)
+    staleTime: Math.min(config.staleTime, 5000), // Max 5s stale time
   });
 
   // Keep animation running continuously

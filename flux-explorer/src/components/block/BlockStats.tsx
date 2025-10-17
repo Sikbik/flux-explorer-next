@@ -14,7 +14,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { CopyButton } from "@/components/ui/copy-button";
-import { InsightAPI } from "@/lib/api/client";
+import { FluxAPI } from "@/lib/api/client";
 import { useBlockTransactionCounts } from "@/hooks/useBlockTransactionCounts";
 
 interface BlockStatsProps {
@@ -36,7 +36,7 @@ export function BlockStats({ block }: BlockStatsProps) {
     const fetchBlockReward = async () => {
       if (block.tx && block.tx.length > 0) {
         try {
-          const coinbaseTx = await InsightAPI.getTransaction(block.tx[0]);
+          const coinbaseTx = await FluxAPI.getTransaction(block.tx[0]);
           if (coinbaseTx) {
             setBlockReward(coinbaseTx.valueOut);
           }

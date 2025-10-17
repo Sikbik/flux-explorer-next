@@ -5,7 +5,8 @@ import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
-import { Search } from "lucide-react";
+import { Search, TrendingUp } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 export function Header() {
   const pathname = usePathname();
@@ -38,6 +39,23 @@ export function Header() {
             Flux Explorer
           </span>
         </Link>
+
+        {/* Navigation Links */}
+        {!isHomePage && (
+          <nav className="hidden md:flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              asChild
+              className="gap-2"
+            >
+              <Link href="/rich-list">
+                <TrendingUp className="h-4 w-4" />
+                <span>Rich List</span>
+              </Link>
+            </Button>
+          </nav>
+        )}
 
         {/* Search bar - only show on non-homepage */}
         {!isHomePage && (

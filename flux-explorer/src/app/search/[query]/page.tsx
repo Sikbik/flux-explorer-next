@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
-import { InsightAPI } from "@/lib/api";
+import { FluxAPI } from "@/lib/api";
 
 /**
  * Universal search page that intelligently routes to the correct page
@@ -38,13 +38,13 @@ export default function SearchPage() {
       if (/^[a-fA-F0-9]{64}$/.test(trimmedQuery)) {
         try {
           // Try as transaction first (more common)
-          await InsightAPI.getTransaction(trimmedQuery);
+          await FluxAPI.getTransaction(trimmedQuery);
           router.replace(`/tx/${trimmedQuery}`);
           return;
         } catch {
           // If transaction fails, try as block hash
           try {
-            await InsightAPI.getBlock(trimmedQuery);
+            await FluxAPI.getBlock(trimmedQuery);
             router.replace(`/block/${trimmedQuery}`);
             return;
           } catch {

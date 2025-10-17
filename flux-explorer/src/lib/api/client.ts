@@ -28,9 +28,6 @@ export class FluxAPIError extends BlockbookAPIError {
   }
 }
 
-// Legacy export for backwards compatibility
-export const InsightAPIError = FluxAPIError;
-
 /**
  * Flux API Client
  * Main interface for blockchain data access
@@ -43,6 +40,16 @@ export class FluxAPI {
    */
   static async getBlock(hashOrHeight: string | number): Promise<Block> {
     return BlockbookAPI.getBlock(hashOrHeight);
+  }
+
+  /**
+   * Fetch a block with full transaction details included
+   * More efficient than fetching block + each transaction separately
+   * @param hashOrHeight - Block hash (string) or height (number)
+   * @returns Block and transactions
+   */
+  static async getBlockWithTransactions(hashOrHeight: string | number) {
+    return BlockbookAPI.getBlockWithTransactions(hashOrHeight);
   }
 
   /**
@@ -163,12 +170,16 @@ export class FluxAPI {
   /**
    * Fetch transactions for multiple addresses
    * @param addresses - Array of Flux addresses
-   * @param params - Query parameters (from, to)
+   * @param params - Query parameters:
+   *   - from: Starting transaction index (for pagination)
+   *   - to: Ending transaction index (for pagination)
+   *   - fromBlock: Starting block height (for date filtering)
+   *   - toBlock: Ending block height (for date filtering)
    * @returns Paginated transaction list
    */
   static async getAddressTransactions(
     addresses: string[],
-    params?: { from?: number; to?: number }
+    params?: { from?: number; to?: number; fromBlock?: number; toBlock?: number }
   ): Promise<{ totalItems: number; from: number; to: number; fromIndex: number; toIndex: number; items: Transaction[]; pagesTotal: number }> {
     return BlockbookAPI.getAddressTransactions(addresses, params);
   }
@@ -232,6 +243,3 @@ export class FluxAPI {
     return BlockbookAPI.estimateFee(nbBlocks);
   }
 }
-
-// Legacy export for backwards compatibility during migration
-export const InsightAPI = FluxAPI;

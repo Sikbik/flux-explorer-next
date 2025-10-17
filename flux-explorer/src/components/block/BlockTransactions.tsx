@@ -254,7 +254,7 @@ export function BlockTransactions({ block }: BlockTransactionsProps) {
                   {/* Transaction Description */}
                   <div className="text-xs text-muted-foreground">
                     {isCoinbase ? (
-                      <span>Block reward: {tx.valueOut.toFixed(8)} FLUX</span>
+                      <span>Block reward: {(tx.valueOut || 0).toFixed(8)} FLUX</span>
                     ) : isFluxNode && isStarting && fluxTx.ip ? (
                       <span>Starting a FluxNode at {fluxTx.ip}</span>
                     ) : isFluxNode && fluxTx.ip ? (
@@ -287,7 +287,7 @@ export function BlockTransactions({ block }: BlockTransactionsProps) {
                         ) : (
                           <span>Unknown</span>
                         )}
-                        <span className="ml-2 font-medium">{tx.valueOut.toFixed(4)} FLUX</span>
+                        <span className="ml-2 font-medium">{(tx.valueOut || 0).toFixed(4)} FLUX</span>
                       </div>
                     )}
                   </div>

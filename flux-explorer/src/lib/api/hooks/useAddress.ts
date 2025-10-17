@@ -6,7 +6,7 @@
  */
 
 import { useQuery, UseQueryOptions, UseQueryResult } from "@tanstack/react-query";
-import { InsightAPI } from "../client";
+import { FluxAPI } from "../client";
 import type {
   AddressInfo,
   PaginatedResponse,
@@ -53,7 +53,7 @@ export function useAddress(
 ): UseQueryResult<AddressInfo, Error> {
   return useQuery<AddressInfo, Error>({
     queryKey: addressKeys.detail(address),
-    queryFn: () => InsightAPI.getAddress(address),
+    queryFn: () => FluxAPI.getAddress(address),
     enabled: !!address && address.length > 0,
     staleTime: 30 * 1000, // 30 seconds - balances can change
     ...options,
@@ -78,7 +78,7 @@ export function useAddressBalance(
 ): UseQueryResult<number, Error> {
   return useQuery<number, Error>({
     queryKey: addressKeys.balance(address),
-    queryFn: () => InsightAPI.getAddressBalance(address),
+    queryFn: () => FluxAPI.getAddressBalance(address),
     enabled: !!address,
     staleTime: 30 * 1000,
     refetchInterval: 60 * 1000, // Refetch every minute
@@ -104,7 +104,7 @@ export function useAddressTotalReceived(
 ): UseQueryResult<number, Error> {
   return useQuery<number, Error>({
     queryKey: addressKeys.totalReceived(address),
-    queryFn: () => InsightAPI.getAddressTotalReceived(address),
+    queryFn: () => FluxAPI.getAddressTotalReceived(address),
     enabled: !!address,
     staleTime: 60 * 1000, // 1 minute
     ...options,
@@ -129,7 +129,7 @@ export function useAddressTotalSent(
 ): UseQueryResult<number, Error> {
   return useQuery<number, Error>({
     queryKey: addressKeys.totalSent(address),
-    queryFn: () => InsightAPI.getAddressTotalSent(address),
+    queryFn: () => FluxAPI.getAddressTotalSent(address),
     enabled: !!address,
     staleTime: 60 * 1000,
     ...options,
@@ -154,7 +154,7 @@ export function useAddressUnconfirmedBalance(
 ): UseQueryResult<number, Error> {
   return useQuery<number, Error>({
     queryKey: addressKeys.unconfirmedBalance(address),
-    queryFn: () => InsightAPI.getAddressUnconfirmedBalance(address),
+    queryFn: () => FluxAPI.getAddressUnconfirmedBalance(address),
     enabled: !!address,
     staleTime: 15 * 1000, // 15 seconds - unconfirmed can change quickly
     refetchInterval: 30 * 1000, // Refetch every 30 seconds
@@ -181,7 +181,7 @@ export function useAddressUtxos(
 ): UseQueryResult<Array<{txid: string; vout: number; value: string; height?: number; confirmations?: number}>, Error> {
   return useQuery({
     queryKey: addressKeys.utxos(address),
-    queryFn: () => InsightAPI.getAddressUtxos(address),
+    queryFn: () => FluxAPI.getAddressUtxos(address),
     enabled: !!address,
     staleTime: 30 * 1000,
     ...options,
@@ -216,7 +216,7 @@ export function useAddressTransactions(
 ): UseQueryResult<PaginatedResponse<Transaction>, Error> {
   return useQuery({
     queryKey: addressKeys.transactions(addresses, params),
-    queryFn: () => InsightAPI.getAddressTransactions(addresses, params),
+    queryFn: () => FluxAPI.getAddressTransactions(addresses, params),
     enabled: addresses.length > 0,
     staleTime: 30 * 1000,
     ...options,

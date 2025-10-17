@@ -6,7 +6,7 @@
  */
 
 import { useQuery, UseQueryOptions, UseQueryResult } from "@tanstack/react-query";
-import { InsightAPI } from "../client";
+import { FluxAPI } from "../client";
 import type { NetworkStatus, SyncStatus, BlockchainStats } from "@/types/flux-api";
 
 /**
@@ -44,7 +44,7 @@ export function useNetworkStatus(
 ): UseQueryResult<NetworkStatus, Error> {
   return useQuery<NetworkStatus, Error>({
     queryKey: networkKeys.status(),
-    queryFn: () => InsightAPI.getStatus(),
+    queryFn: () => FluxAPI.getStatus(),
     staleTime: 30 * 1000, // 30 seconds
     refetchInterval: 60 * 1000, // Refetch every minute
     ...options,
@@ -77,7 +77,7 @@ export function useSyncStatus(
 ): UseQueryResult<SyncStatus, Error> {
   return useQuery<SyncStatus, Error>({
     queryKey: networkKeys.sync(),
-    queryFn: () => InsightAPI.getSyncStatus(),
+    queryFn: () => FluxAPI.getSyncStatus(),
     staleTime: 30 * 1000,
     refetchInterval: 30 * 1000, // Refetch every 30 seconds while syncing
     ...options,
@@ -111,7 +111,7 @@ export function useBlockchainStats(
 ): UseQueryResult<BlockchainStats, Error> {
   return useQuery<BlockchainStats, Error>({
     queryKey: days ? networkKeys.statsWithDays(days) : networkKeys.stats(),
-    queryFn: () => InsightAPI.getStats(days),
+    queryFn: () => FluxAPI.getStats(days),
     staleTime: 5 * 60 * 1000, // 5 minutes - stats don't change frequently
     ...options,
   });
@@ -134,7 +134,7 @@ export function useSupply(
 ): UseQueryResult<number, Error> {
   return useQuery<number, Error>({
     queryKey: networkKeys.supply(),
-    queryFn: () => InsightAPI.getSupply(),
+    queryFn: () => FluxAPI.getSupply(),
     staleTime: 10 * 60 * 1000, // 10 minutes - supply changes slowly
     ...options,
   });
@@ -159,7 +159,7 @@ export function useEstimateFee(
 ): UseQueryResult<number, Error> {
   return useQuery<number, Error>({
     queryKey: networkKeys.estimateFee(nbBlocks),
-    queryFn: () => InsightAPI.estimateFee(nbBlocks),
+    queryFn: () => FluxAPI.estimateFee(nbBlocks),
     staleTime: 60 * 1000, // 1 minute
     ...options,
   });

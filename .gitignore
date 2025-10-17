@@ -54,3 +54,24 @@ next-env.d.ts
 # OS
 .DS_Store
 Thumbs.db
+
+# Backup files
+*.backup
+*.bak
+*~
+
+# Logs
+logs/
+*.log
+
+# Scanner data (if testing locally)
+flux-scanner/data/
+scanner-data/
+
+# Docker volumes
+docker-volumes/
+
+# Temporary files
+tmp/
+temp/
+.cache/

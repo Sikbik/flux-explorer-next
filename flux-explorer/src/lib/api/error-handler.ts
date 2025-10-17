@@ -5,7 +5,7 @@
  * in a user-friendly way.
  */
 
-import { InsightAPIError } from "./client";
+import { FluxAPIError } from "./client";
 
 /**
  * Error types for better error handling
@@ -33,7 +33,7 @@ export interface ErrorResponse {
  * Determine error type from error object
  */
 function getErrorType(error: unknown): ErrorType {
-  if (error instanceof InsightAPIError) {
+  if (error instanceof FluxAPIError) {
     const statusCode = error.statusCode;
 
     if (!statusCode) {
@@ -135,7 +135,7 @@ export function parseError(error: unknown): ErrorResponse {
   );
 
   const statusCode =
-    error instanceof InsightAPIError ? error.statusCode : undefined;
+    error instanceof FluxAPIError ? error.statusCode : undefined;
 
   return {
     type,

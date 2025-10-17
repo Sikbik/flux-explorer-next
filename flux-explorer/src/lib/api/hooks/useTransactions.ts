@@ -6,7 +6,7 @@
  */
 
 import { useQuery, useQueries, UseQueryOptions, UseQueryResult } from "@tanstack/react-query";
-import { InsightAPI } from "../client";
+import { FluxAPI } from "../client";
 import type { Transaction } from "@/types/flux-api";
 
 /**
@@ -41,7 +41,7 @@ export function useTransaction(
 ): UseQueryResult<Transaction, Error> {
   return useQuery<Transaction, Error>({
     queryKey: transactionKeys.detail(txid),
-    queryFn: () => InsightAPI.getTransaction(txid),
+    queryFn: () => FluxAPI.getTransaction(txid),
     enabled: !!txid && txid.length === 64, // Valid txid is 64 hex characters
     staleTime: 5 * 60 * 1000, // 5 minutes - confirmed transactions don't change
     ...options,
@@ -69,7 +69,7 @@ export function useRawTransaction(
 ): UseQueryResult<{ rawtx: string }, Error> {
   return useQuery<{ rawtx: string }, Error>({
     queryKey: transactionKeys.raw(txid),
-    queryFn: () => InsightAPI.getRawTransaction(txid),
+    queryFn: () => FluxAPI.getRawTransaction(txid),
     enabled: !!txid && txid.length === 64,
     staleTime: 5 * 60 * 1000,
     ...options,
@@ -96,7 +96,7 @@ export function useTransactions(txids: string[]): UseQueryResult<Transaction, Er
   return useQueries({
     queries: txids.map((txid) => ({
       queryKey: transactionKeys.detail(txid),
-      queryFn: () => InsightAPI.getTransaction(txid),
+      queryFn: () => FluxAPI.getTransaction(txid),
       enabled: !!txid && txid.length === 64,
       staleTime: 5 * 60 * 1000,
     })),

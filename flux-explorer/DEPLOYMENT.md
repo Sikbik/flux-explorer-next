@@ -160,10 +160,11 @@ curl http://localhost:3000/api/health
 
 ## Flux Deployment Options
 
-The Flux Explorer can be deployed in two configurations:
+The Flux Explorer can be deployed in three configurations:
 
 1. **Standalone** - Uses public Blockbook API (simple, quick setup)
-2. **Multi-Component** - Runs local Blockbook for 10-100x better performance
+2. **Multi-Component with Blockbook** - Runs local Blockbook for 10-100x better performance
+3. **Full Stack with Rich List** - Adds scanner component for rich list feature
 
 ### Prerequisites
 - Docker Hub account (or other public container registry)
@@ -288,6 +289,167 @@ PORT=3000
 ```
 
 No additional configuration needed for basic deployment.
+
+### Option 1: Standalone Deployment (Public API)
+
+Simple deployment using public Blockbook API - no additional configuration needed.
+
+**Pros:**
+- Simplest setup
+- Lowest cost (single component)
+- No maintenance required
+
+**Cons:**
+- Slower API responses (network latency)
+- Dependent on public API availability
+- No rich list feature
+
+**Specifications:**
+- CPU: 2 cores
+- RAM: 4096 MB
+- Storage: 10 GB
+
+### Option 2: Multi-Component Deployment (Local Blockbook)
+
+Deploy with local Blockbook instance for 10-100x better performance.
+
+**Component 1: Blockbook**
+```json
+{
+  "name": "blockbook",
+  "description": "Blockchain indexer",
+  "repotag": "runonflux/blockbook-flux:latest",
+  "port": 9158,
+  "containerPort": 9158,
+  "containerData": "/root",
+  "cpu": 5.0,
+  "ram": 10240,
+  "hdd": 181
+}
+```
+
+**Component 2: Explorer**
+```json
+{
+  "name": "explorer",
+  "description": "Blockchain explorer frontend",
+  "repotag": "littlestache/flux-explorer:latest",
+  "port": 3000,
+  "containerPort": 3000,
+  "environmentParameters": [
+    "BLOCKBOOK_API_URL=http://fluxblockbook_yourappname:9158/api/v2",
+    "NEXT_PUBLIC_BLOCKBOOK_API_URL=https://your-public-blockbook-url/api/v2"
+  ],
+  "cpu": 2.0,
+  "ram": 4096,
+  "hdd": 10
+}
+```
+
+**Important:** Replace `yourappname` with your Flux app name. Flux uses the pattern `flux{componentname}_{appname}` for internal networking.
+
+**Total Resource Requirements:**
+- CPU: 7 cores
+- RAM: 14336 MB (14 GB)
+- Storage: 191 GB
+
+**Sync Timeline:**
+- Stage 1 (Initial Sync): 6-12 hours - API unavailable
+- Stage 2 (Catching Up): API available with partial data
+- Stage 3 (Fully Synced): Complete historical data (~24 hours total)
+
+### Option 3: Full Stack with Rich List Scanner
+
+Add a third component for rich list feature - scans blockchain daily to generate sorted address list.
+
+**Component 3: Scanner**
+```json
+{
+  "name": "scanner",
+  "description": "Rich list scanner",
+  "repotag": "littlestache/flux-scanner:latest",
+  "port": 3001,
+  "containerPort": 3001,
+  "environmentParameters": [
+    "BLOCKBOOK_API_URL=http://fluxblockbook_yourappname:9158/api/v2",
+    "CRON_SCHEDULE=0 2 * * *",
+    "RUN_SCAN_ON_STARTUP=true",
+    "MIN_BALANCE=1"
+  ],
+  "containerData": "/data",
+  "cpu": 1.0,
+  "ram": 2048,
+  "hdd": 20
+}
+```
+
+**Update Explorer Component:**
+```json
+{
+  "environmentParameters": [
+    "BLOCKBOOK_API_URL=http://fluxblockbook_yourappname:9158/api/v2",
+    "NEXT_PUBLIC_BLOCKBOOK_API_URL=https://your-public-blockbook-url/api/v2",
+    "SCANNER_API_URL=http://fluxscanner_yourappname:3001"
+  ]
+}
+```
+
+**Scanner Features:**
+- Scans entire blockchain on first run (2-6 hours)
+- Incremental updates daily at 2am UTC (configurable)
+- Tracks all addresses with balance >= 1 FLUX (configurable)
+- Serves data via HTTP API on port 3001
+- Checkpoint saving for crash recovery
+
+**Total Resource Requirements (All 3 Components):**
+- CPU: 8 cores
+- RAM: 16384 MB (16 GB)
+- Storage: 211 GB
+
+**Performance:**
+- Initial scan: 2-6 hours
+- Daily updates: 1-5 minutes
+- Rich list access: Instant (cached data)
+
+**Cost Comparison:**
+
+| Configuration | Components | Monthly Cost (Est.) |
+|--------------|------------|---------------------|
+| Standalone | 1 (Explorer) | ~50 FLUX |
+| With Blockbook | 2 (Explorer + Blockbook) | ~150 FLUX |
+| Full Stack | 3 (Explorer + Blockbook + Scanner) | ~180 FLUX |
+
+### Multi-Component Networking
+
+Flux uses a special hostname pattern for internal component communication:
+
+```
+flux{componentname}_{appname}
+```
+
+**Examples:**
+- App name: `myexplorer`
+- Blockbook component: `fluxblockbook_myexplorer`
+- Scanner component: `fluxscanner_myexplorer`
+- Explorer component: `fluxexplorer_myexplorer`
+
+**Environment Variable Configuration:**
+
+```bash
+# In Explorer component - connect to other components
+BLOCKBOOK_API_URL=http://fluxblockbook_myexplorer:9158/api/v2
+SCANNER_API_URL=http://fluxscanner_myexplorer:3001
+
+# In Scanner component - connect to Blockbook
+BLOCKBOOK_API_URL=http://fluxblockbook_myexplorer:9158/api/v2
+```
+
+**Important Notes:**
+1. Use `BLOCKBOOK_API_URL` (without `NEXT_PUBLIC_`) for server-side API routes
+2. Use `NEXT_PUBLIC_BLOCKBOOK_API_URL` for client-side browser requests
+3. Replace `myexplorer` with your actual Flux app name
+4. Internal URLs use `http://` (not https)
+5. Port numbers match the `containerPort` in component specs
 
 ## Monitoring
 

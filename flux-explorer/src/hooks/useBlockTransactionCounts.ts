@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Block, Transaction } from '@/types/flux-api';
 import { FluxNodeTransaction, isFluxNodeTransaction } from '@/lib/flux-tx-parser';
-import { InsightAPI } from '@/lib/api/client';
+import { FluxAPI } from '@/lib/api/client';
+import { getApiConfig } from '@/lib/api/config';
 
 export interface TransactionCounts {
   coinbase: number;
@@ -68,11 +69,26 @@ export function useBlockTransactionCounts(block: Block) {
     const categorizeTransactions = async () => {
       setLoading(true);
 
-      const allTxPromises = block.tx.map(txid =>
-        InsightAPI.getTransaction(txid).catch(() => null)
-      );
+      //  Fetch transactions with FluxAPI.getTransaction() which includes tier detection
+      // This properly handles FluxNode tier determination by fetching collateral transactions
+      const config = getApiConfig();
+      const batchSize = Math.min(config.batchSize, 50);
+      const allTxData: (Transaction | null)[] = [];
 
-      const allTxData = await Promise.all(allTxPromises);
+      for (let i = 0; i < block.tx.length; i += batchSize) {
+        const batchTxids = block.tx.slice(i, i + batchSize);
+        const batchPromises = batchTxids.map(txid =>
+          FluxAPI.getTransaction(txid).catch(() => null)
+        );
+
+        const batchResults = await Promise.all(batchPromises);
+        allTxData.push(...batchResults);
+
+        // Add throttle delay between batches (except for the last batch)
+        if (i + batchSize < block.tx.length) {
+          await new Promise(resolve => setTimeout(resolve, config.throttleDelay));
+        }
+      }
 
       const categorized: CategorizedTransaction[] = [];
       const newCounts: TransactionCounts = {

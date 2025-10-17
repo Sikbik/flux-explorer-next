@@ -22,6 +22,7 @@ import {
   parseDifficulty,
 } from "./blockbook-utils";
 import { parseFluxNodeTransaction, isFluxNodeTransaction, getTierFromCollateral } from "@/lib/flux-tx-parser";
+import { getApiConfig } from "./config";
 
 // Blockbook API response types
 interface BlockbookApiResponse {
@@ -50,7 +51,7 @@ interface BlockbookBlockResponse {
   height: number;
   version?: number;
   merkleRoot?: string;
-  txs?: Array<{ txid: string }>;
+  txs?: Array<BlockbookTransactionResponse>; // Can include full transaction objects
   time?: number;
   nonce?: string;
   bits?: string;
@@ -124,21 +125,73 @@ interface BlockbookUtxoResponse {
 // Support both server-side and client-side API URL configuration
 // Server-side (API routes): BLOCKBOOK_API_URL (runtime, for internal component communication)
 // Client-side (browser): NEXT_PUBLIC_BLOCKBOOK_API_URL (build-time)
-const API_BASE_URL =
-  (typeof window === 'undefined'
-    ? process.env.BLOCKBOOK_API_URL || process.env.NEXT_PUBLIC_BLOCKBOOK_API_URL
-    : process.env.NEXT_PUBLIC_BLOCKBOOK_API_URL
-  ) || "https://blockbookflux.app.runonflux.io/api/v2";
+function getApiBaseUrl(): string {
+  // Try local URL first (for server-side or when explicitly configured)
+  const localUrl = process.env.BLOCKBOOK_API_URL ||
+                   process.env.NEXT_PUBLIC_LOCAL_BLOCKBOOK_API_URL;
 
-const apiClient = ky.create({
-  prefixUrl: API_BASE_URL,
-  timeout: 30000,
-  retry: {
-    limit: 2,
-    methods: ["get"],
-    statusCodes: [408, 413, 429, 500, 502, 503, 504],
-  },
-});
+  // Public fallback URL
+  const publicUrl = typeof window === 'undefined'
+    ? process.env.NEXT_PUBLIC_BLOCKBOOK_API_URL
+    : process.env.NEXT_PUBLIC_BLOCKBOOK_API_URL;
+
+  return localUrl || publicUrl || "https://blockbookflux.app.runonflux.io/api/v2";
+}
+
+let currentApiBaseUrl = getApiBaseUrl();
+
+/**
+ * Create API client with dynamic configuration
+ */
+function createApiClient() {
+  const config = getApiConfig();
+
+  return ky.create({
+    prefixUrl: currentApiBaseUrl,
+    timeout: config.timeout,
+    retry: {
+      limit: config.retryLimit,
+      methods: ["get"],
+      statusCodes: [408, 413, 429, 500, 502, 503, 504],
+    },
+  });
+}
+
+// Initialize API client
+let apiClient = createApiClient();
+
+/**
+ * Recreate API client with updated configuration
+ * Called when API mode changes
+ */
+export function recreateApiClient(): void {
+  apiClient = createApiClient();
+  console.log('[Blockbook Client] API client recreated with base URL:', currentApiBaseUrl);
+}
+
+/**
+ * Update the API base URL and rebuild the client if it changed
+ */
+export function setApiBaseUrl(newBaseUrl: string | undefined | null): void {
+  if (!newBaseUrl || newBaseUrl === currentApiBaseUrl) {
+    return;
+  }
+
+  currentApiBaseUrl = newBaseUrl;
+  recreateApiClient();
+}
+
+// Listen for API endpoint changes (from health monitor)
+if (typeof window !== 'undefined') {
+  window.addEventListener('api-endpoint-changed', (event) => {
+    const detail = (event as CustomEvent<{ endpoint?: { url?: string } }>).detail;
+    if (detail?.endpoint?.url) {
+      setApiBaseUrl(detail.endpoint.url);
+    } else {
+      recreateApiClient();
+    }
+  });
+}
 
 /**
  * Custom error class for Blockbook API errors
@@ -214,6 +267,31 @@ export class BlockbookAPI {
   }
 
   /**
+   * Fetch a block with full transaction details included
+   * This is more efficient than fetching block + each transaction separately
+   */
+  static async getBlockWithTransactions(hashOrHeight: string | number): Promise<{
+    block: Block;
+    transactions: BlockbookTransactionResponse[];
+  }> {
+    try {
+      // Try to fetch block with transaction details
+      const response = await apiClient.get(`block/${hashOrHeight}`).json<BlockbookBlockResponse>();
+
+      return {
+        block: convertBlockbookBlock(response),
+        transactions: response.txs || [],
+      };
+    } catch (error) {
+      throw new BlockbookAPIError(
+        `Failed to fetch block with transactions ${hashOrHeight}`,
+        getStatusCode(error),
+        error
+      );
+    }
+  }
+
+  /**
    * Fetch block index/summary by height
    */
   static async getBlockIndex(height: number): Promise<BlockSummary> {
@@ -247,16 +325,19 @@ export class BlockbookAPI {
 
   /**
    * Fetch latest blocks
+   * Uses batched fetching with throttling for better performance
    */
   static async getLatestBlocks(limit: number = 10): Promise<BlockSummary[]> {
     try {
+      const config = getApiConfig();
+
       // Get current height first
       const statusResponse = await apiClient.get("api").json<BlockbookApiResponse>();
       const currentHeight = statusResponse.backend.blocks;
 
       // Fetch blocks starting from current height
       const blocks: BlockSummary[] = [];
-      const batchSize = Math.min(limit, 20); // Blockbook limit per request
+      const batchSize = Math.min(config.batchSize, 20); // Use dynamic batch size, cap at 20
 
       for (let i = 0; i < limit; i += batchSize) {
         const startHeight = currentHeight - i;
@@ -275,6 +356,11 @@ export class BlockbookAPI {
 
         const fetchedBlocks = await Promise.all(blockPromises);
         blocks.push(...fetchedBlocks);
+
+        // Add throttle delay between batches (except for the last batch)
+        if (blocks.length < limit && i + batchSize < limit) {
+          await new Promise(resolve => setTimeout(resolve, config.throttleDelay));
+        }
 
         if (blocks.length >= limit) break;
       }
@@ -475,11 +561,18 @@ export class BlockbookAPI {
   }
 
   /**
-   * Fetch transactions for addresses with pagination
+   * Fetch transactions for addresses with pagination and optional block height filtering
+   *
+   * @param addresses Array of addresses (only first is used)
+   * @param params Pagination and filtering parameters:
+   *   - from: Starting transaction index (for pagination)
+   *   - to: Ending transaction index (for pagination)
+   *   - fromBlock: Starting block height (for date filtering)
+   *   - toBlock: Ending block height (for date filtering)
    */
   static async getAddressTransactions(
     addresses: string[],
-    params?: { from?: number; to?: number }
+    params?: { from?: number; to?: number; fromBlock?: number; toBlock?: number }
   ): Promise<{ totalItems: number; from: number; to: number; fromIndex: number; toIndex: number; items: Transaction[]; pagesTotal: number }> {
     try {
       // Blockbook API uses single address with pagination
@@ -491,15 +584,25 @@ export class BlockbookAPI {
       const pageSize = to - from;
       const page = Math.floor(from / pageSize) + 1;
 
+      // Build search params
+      const searchParams: Record<string, string> = {
+        details: "txs",
+        page: page.toString(),
+        pageSize: pageSize.toString(),
+      };
+
+      // Add block height filtering if provided
+      if (params?.fromBlock !== undefined) {
+        searchParams.from = params.fromBlock.toString();
+      }
+      if (params?.toBlock !== undefined) {
+        searchParams.to = params.toBlock.toString();
+      }
+
       const response = await apiClient
-        .get(`address/${address}`, {
-          searchParams: {
-            details: "txs",
-            page: page.toString(),
-            pageSize: pageSize.toString(),
-          },
-        })
+        .get(`address/${address}`, { searchParams })
         .json<BlockbookAddressResponse>();
+
 
       // Convert to expected format
       const items = response.transactions?.map((tx: BlockbookTransactionResponse) =>

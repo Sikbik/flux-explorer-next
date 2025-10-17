@@ -35,7 +35,6 @@ interface AddressTransactionsProps {
 
 const ITEMS_PER_PAGE = 25;
 const MAX_TRANSACTIONS_PER_FILE = 50000; // Split large exports into 50k transaction files
-const API_REQUEST_DELAY_MS = 100; // 100ms delay between API requests to prevent flooding
 
 export function AddressTransactions({ addressInfo }: AddressTransactionsProps) {
   const [currentPage, setCurrentPage] = useState(0);
@@ -44,6 +43,8 @@ export function AddressTransactions({ addressInfo }: AddressTransactionsProps) {
   const [exportProgress, setExportProgress] = useState(0);
   const [exportStatus, setExportStatus] = useState("");
   const [abortController, setAbortController] = useState<AbortController | null>(null);
+  const [exportLimit, setExportLimit] = useState<number>(0); // 0 = export all
+  const [showExportOptions, setShowExportOptions] = useState<'csv' | 'json' | null>(null);
 
   const from = currentPage * ITEMS_PER_PAGE;
   const to = from + ITEMS_PER_PAGE;
@@ -57,26 +58,12 @@ export function AddressTransactions({ addressInfo }: AddressTransactionsProps) {
   const totalPages = txData?.pagesTotal || 0;
   const totalTransactions = (txData && 'totalItems' in txData ? (txData.totalItems as number) : undefined) || addressInfo.txApperances || 0;
 
+
   const handleExportCSV = async () => {
     if (!transactions.length) return;
 
-    // Validate total transactions (safety check)
-    const safeTotal = Math.max(0, totalTransactions);
-    if (safeTotal === 0) return;
-
-    // Calculate number of files needed
-    const numFiles = Math.ceil(safeTotal / MAX_TRANSACTIONS_PER_FILE);
-    const willSplit = numFiles > 1;
-
-    // Show warning for large exports
-    if (safeTotal > 1000) {
-      const message = willSplit
-        ? `This will export ${safeTotal.toLocaleString()} transactions split into ${numFiles} files (${MAX_TRANSACTIONS_PER_FILE.toLocaleString()} transactions each). This may take a while. Continue?`
-        : `This will export ${safeTotal.toLocaleString()} transactions. This may take a while. Continue?`;
-
-      const confirmed = window.confirm(message);
-      if (!confirmed) return;
-    }
+    // Close export options panel
+    setShowExportOptions(null);
 
     // Create abort controller for cancellation
     const controller = new AbortController();
@@ -86,60 +73,108 @@ export function AddressTransactions({ addressInfo }: AddressTransactionsProps) {
     setExportStatus("Preparing export...");
 
     try {
-      // For small number of transactions, use current page only
-      if (safeTotal <= ITEMS_PER_PAGE) {
-        setExportStatus("Generating CSV...");
-        exportTransactionsToCSV(transactions, 1, 1);
-        return;
+      const { FluxAPI } = await import("@/lib/api/client");
+      const { getApiConfig } = await import("@/lib/api/config");
+      const config = getApiConfig();
+
+      const safeTotal = Math.max(0, totalTransactions);
+
+      // Determine how many transactions to export (0 = all, or user-specified limit)
+      const txCountToExport = exportLimit > 0 ? Math.min(exportLimit, safeTotal) : safeTotal;
+
+      // Show warning for large exports
+      if (txCountToExport > 1000) {
+        const message = `This will export ${txCountToExport.toLocaleString()} transaction${txCountToExport !== 1 ? 's' : ''}. This may take a while. Continue?`;
+        const confirmed = window.confirm(message);
+        if (!confirmed) {
+          setIsExporting(false);
+          setAbortController(null);
+          return;
+        }
       }
 
-      // For large number of transactions, fetch all in batches
-      const { InsightAPI } = await import("@/lib/api/client");
-      const batchSize = 100; // Fetch 100 transactions at a time
+      const batchSize = config.batchSize; // Use dynamic batch size (1000 for local, 100 for public)
+      const allTransactions: Transaction[] = [];
 
-      // Process each file segment
-      for (let fileNum = 0; fileNum < numFiles; fileNum++) {
+      // Fetch transactions (most recent first, limited by txCountToExport)
+      for (let offset = 0; offset < txCountToExport; offset += batchSize) {
         // Check if user cancelled
         if (controller.signal.aborted) {
           throw new Error("Export cancelled by user");
         }
 
-        const fileStart = fileNum * MAX_TRANSACTIONS_PER_FILE;
-        const fileEnd = Math.min(fileStart + MAX_TRANSACTIONS_PER_FILE, safeTotal);
-        const fileTransactions: Transaction[] = [];
+        const fetchedCount = Math.min(offset + batchSize, txCountToExport);
+        const progressPercent = 10 + Math.round((fetchedCount / txCountToExport) * 70); // 10-80% is fetching
 
-        setExportStatus(`Processing file ${fileNum + 1} of ${numFiles}...`);
+        setExportProgress(progressPercent);
+        setExportStatus(`Fetching transactions: ${allTransactions.length.toLocaleString()} / ${txCountToExport.toLocaleString()}`);
 
-        // Fetch transactions for this file segment
-        for (let offset = fileStart; offset < fileEnd; offset += batchSize) {
-          // Check if user cancelled
-          if (controller.signal.aborted) {
-            throw new Error("Export cancelled by user");
-          }
+        // Retry logic with exponential backoff for Blockbook timeouts/errors
+        let retryCount = 0;
+        const maxRetries = 3;
+        let data;
 
-          const fetchedCount = Math.min(offset + batchSize, safeTotal);
-          const progressPercent = Math.round((fetchedCount / safeTotal) * 100);
+        while (retryCount <= maxRetries) {
+          try {
+            data = await FluxAPI.getAddressTransactions(
+              [addressInfo.addrStr],
+              { from: offset, to: offset + batchSize }
+            );
+            break; // Success, exit retry loop
+          } catch (error) {
+            retryCount++;
+            const errorMsg = error instanceof Error ? error.message : 'Unknown error';
 
-          setExportProgress(progressPercent);
-          setExportStatus(`Fetching transactions: ${fetchedCount.toLocaleString()} / ${safeTotal.toLocaleString()} (File ${fileNum + 1}/${numFiles})`);
+            if (retryCount > maxRetries) {
+              // Final retry failed, provide detailed error
+              throw new Error(
+                `Blockbook request failed after ${maxRetries} retries.\n` +
+                `Offset: ${offset.toLocaleString()}\n` +
+                `Progress: ${progressPercent}% (${allTransactions.length.toLocaleString()}/${txCountToExport.toLocaleString()})\n` +
+                `Error: ${errorMsg}`
+              );
+            }
 
-          const data = await InsightAPI.getAddressTransactions(
-            [addressInfo.addrStr],
-            { from: offset, to: offset + batchSize }
-          );
+            // Exponential backoff: 500ms, 1s, 2s
+            const retryDelay = 500 * Math.pow(2, retryCount - 1);
+            console.warn(
+              `[Export CSV] Blockbook retry ${retryCount}/${maxRetries} after ${retryDelay}ms ` +
+              `(offset ${offset}, error: ${errorMsg})`
+            );
+            setExportStatus(
+              `Retrying (${retryCount}/${maxRetries})... ` +
+              `${allTransactions.length.toLocaleString()} / ${safeTotal.toLocaleString()}`
+            );
 
-          if (data.items) {
-            fileTransactions.push(...data.items);
-          }
-
-          // Rate limiting: Add delay between requests (except last one in file)
-          if (offset + batchSize < fileEnd) {
-            await new Promise(resolve => setTimeout(resolve, API_REQUEST_DELAY_MS));
+            await new Promise(resolve => setTimeout(resolve, retryDelay));
           }
         }
 
-        // Generate CSV for this file segment
+        if (data && data.items) {
+          allTransactions.push(...data.items);
+        }
+
+        // Rate limiting: Add delay between requests (except last one)
+        if (offset + batchSize < safeTotal) {
+          await new Promise(resolve => setTimeout(resolve, config.throttleDelay));
+        }
+      }
+
+      setExportProgress(85);
+      setExportStatus(`Preparing ${allTransactions.length.toLocaleString()} transactions for export...`);
+
+      // Split into files if needed
+      const numFiles = Math.ceil(allTransactions.length / MAX_TRANSACTIONS_PER_FILE);
+
+      for (let fileNum = 0; fileNum < numFiles; fileNum++) {
+        const fileStart = fileNum * MAX_TRANSACTIONS_PER_FILE;
+        const fileEnd = Math.min(fileStart + MAX_TRANSACTIONS_PER_FILE, allTransactions.length);
+        const fileTransactions = allTransactions.slice(fileStart, fileEnd);
+
+        const progressPercent = 85 + Math.round(((fileNum + 1) / numFiles) * 15); // Last 15% is generating files
+        setExportProgress(progressPercent);
         setExportStatus(`Generating CSV file ${fileNum + 1} of ${numFiles}...`);
+
         exportTransactionsToCSV(fileTransactions, fileNum + 1, numFiles);
 
         // Small delay between files
@@ -270,7 +305,14 @@ export function AddressTransactions({ addressInfo }: AddressTransactionsProps) {
         txType = "Send";
         amount = Math.abs(netAmount);
         fromAddr = addressInfo.addrStr;
-        toAddr = toAddresses.length > 0 ? toAddresses[0] : "";
+
+        // Handle multiple outputs (e.g., mining pool payouts)
+        if (toAddresses.length > 1) {
+          toAddr = `${toAddresses.length} recipients`;
+          notes = `Split to ${toAddresses.length} addresses: ${toAddresses.slice(0, 3).join(', ')}${toAddresses.length > 3 ? '...' : ''}`;
+        } else {
+          toAddr = toAddresses.length > 0 ? toAddresses[0] : "";
+        }
       } else {
         // Net zero = No economic impact (likely dust or self-transfer)
         txType = "Send";
@@ -340,60 +382,293 @@ export function AddressTransactions({ addressInfo }: AddressTransactionsProps) {
   const handleExportJSON = async () => {
     if (!transactions.length) return;
 
-    // Show warning for large exports
-    if (totalTransactions > 1000) {
-      const confirmed = window.confirm(
-        `This will export ${totalTransactions.toLocaleString()} transactions. This may take a while. Continue?`
-      );
-      if (!confirmed) return;
-    }
+    // Close export options panel
+    setShowExportOptions(null);
 
+    // Create abort controller for cancellation
+    const controller = new AbortController();
+    setAbortController(controller);
     setIsExporting(true);
+    setExportProgress(0);
+    setExportStatus("Preparing export...");
 
     try {
-      let exportData: Transaction[] = transactions;
+      const { FluxAPI } = await import("@/lib/api/client");
+      const { getApiConfig } = await import("@/lib/api/config");
+      const config = getApiConfig();
 
-      // For large number of transactions, fetch all in batches
-      if (totalTransactions > ITEMS_PER_PAGE) {
-        const { InsightAPI } = await import("@/lib/api/client");
-        const allTransactions: Transaction[] = [];
-        const batchSize = 100;
-        const totalBatches = Math.ceil(totalTransactions / batchSize);
-        let currentBatch = 0;
+      const safeTotal = Math.max(0, totalTransactions);
 
-        for (let offset = 0; offset < totalTransactions; offset += batchSize) {
-          currentBatch++;
-          console.log(`Fetching batch ${currentBatch}/${totalBatches}...`);
+      // Determine how many transactions to export (0 = all, or user-specified limit)
+      const txCountToExport = exportLimit > 0 ? Math.min(exportLimit, safeTotal) : safeTotal;
 
-          const data = await InsightAPI.getAddressTransactions(
-            [addressInfo.addrStr],
-            { from: offset, to: offset + batchSize }
-          );
+      // Show warning for large exports
+      if (txCountToExport > 1000) {
+        const message = `This will export ${txCountToExport.toLocaleString()} transactions. This may take a while. Continue?`;
+        const confirmed = window.confirm(message);
+        if (!confirmed) {
+          setIsExporting(false);
+          setAbortController(null);
+          return;
+        }
+      }
 
-          if (data.items) {
-            allTransactions.push(...data.items);
+      const batchSize = config.batchSize; // Use dynamic batch size (1000 for local, 100 for public)
+      const allTransactions: Transaction[] = [];
+
+      // Fetch transactions (most recent first, limited by txCountToExport)
+      for (let offset = 0; offset < txCountToExport; offset += batchSize) {
+        // Check if user cancelled
+        if (controller.signal.aborted) {
+          throw new Error("Export cancelled by user");
+        }
+
+        const fetchedCount = Math.min(offset + batchSize, txCountToExport);
+        const progressPercent = 10 + Math.round((fetchedCount / txCountToExport) * 70); // 10-80% is fetching
+
+        setExportProgress(progressPercent);
+        setExportStatus(`Fetching transactions: ${allTransactions.length.toLocaleString()} / ${txCountToExport.toLocaleString()}`);
+
+        // Retry logic with exponential backoff for Blockbook timeouts/errors
+        let retryCount = 0;
+        const maxRetries = 3;
+        let data;
+
+        while (retryCount <= maxRetries) {
+          try {
+            data = await FluxAPI.getAddressTransactions(
+              [addressInfo.addrStr],
+              { from: offset, to: offset + batchSize }
+            );
+            break; // Success, exit retry loop
+          } catch (error) {
+            retryCount++;
+            const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+
+            if (retryCount > maxRetries) {
+              // Final retry failed, provide detailed error
+              throw new Error(
+                `Blockbook request failed after ${maxRetries} retries.\n` +
+                `Offset: ${offset.toLocaleString()}\n` +
+                `Progress: ${progressPercent}% (${allTransactions.length.toLocaleString()}/${txCountToExport.toLocaleString()})\n` +
+                `Error: ${errorMsg}`
+              );
+            }
+
+            // Exponential backoff: 500ms, 1s, 2s
+            const retryDelay = 500 * Math.pow(2, retryCount - 1);
+            console.warn(
+              `[Export JSON] Blockbook retry ${retryCount}/${maxRetries} after ${retryDelay}ms ` +
+              `(offset ${offset}, error: ${errorMsg})`
+            );
+            setExportStatus(
+              `Retrying (${retryCount}/${maxRetries})... ` +
+              `${allTransactions.length.toLocaleString()} / ${safeTotal.toLocaleString()}`
+            );
+
+            await new Promise(resolve => setTimeout(resolve, retryDelay));
           }
         }
 
-        exportData = allTransactions;
+        if (data && data.items) {
+          allTransactions.push(...data.items);
+        }
+
+        // Rate limiting: Add delay between requests (except last one)
+        if (offset + batchSize < safeTotal) {
+          await new Promise(resolve => setTimeout(resolve, config.throttleDelay));
+        }
       }
 
-      const jsonContent = JSON.stringify(exportData, null, 2);
-      const blob = new Blob([jsonContent], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `flux-address-${addressInfo.addrStr.slice(0, 8)}-transactions.json`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
+      setExportProgress(85);
+      setExportStatus(`Preparing ${allTransactions.length.toLocaleString()} transactions for export...`);
+
+      // Split into files if needed
+      const numFiles = Math.ceil(allTransactions.length / MAX_TRANSACTIONS_PER_FILE);
+
+      for (let fileNum = 0; fileNum < numFiles; fileNum++) {
+        const fileStart = fileNum * MAX_TRANSACTIONS_PER_FILE;
+        const fileEnd = Math.min(fileStart + MAX_TRANSACTIONS_PER_FILE, allTransactions.length);
+        const fileTransactions = allTransactions.slice(fileStart, fileEnd);
+
+        const progressPercent = 85 + Math.round(((fileNum + 1) / numFiles) * 15); // Last 15% is generating files
+        setExportProgress(progressPercent);
+        setExportStatus(`Generating JSON file ${fileNum + 1} of ${numFiles}...`);
+
+        exportTransactionsToJSON(fileTransactions, fileNum + 1, numFiles);
+
+        // Small delay between files
+        if (fileNum < numFiles - 1) {
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+      }
+
+      setExportStatus("Export complete!");
+      await new Promise(resolve => setTimeout(resolve, 1000));
     } catch (error) {
       console.error("Export failed:", error);
-      alert("Failed to export transactions. Please try again.");
+      if (error instanceof Error && error.message === "Export cancelled by user") {
+        alert("Export cancelled.");
+      } else {
+        alert("Failed to export transactions. Please try again.");
+      }
     } finally {
       setIsExporting(false);
+      setExportProgress(0);
+      setExportStatus("");
+      setAbortController(null);
     }
+  };
+
+  const exportTransactionsToJSON = (txs: Transaction[], fileNum: number = 1, totalFiles: number = 1) => {
+    if (!txs.length) return;
+
+    // Enrich transactions with labels (same logic as CSV export)
+    const enrichedTxs = txs.map((tx) => {
+      const date = tx.time ? new Date(tx.time * 1000) : new Date();
+      const isReceived = tx.vout.some((out: TransactionOutput) =>
+        out.scriptPubKey.addresses?.includes(addressInfo.addrStr)
+      );
+      const isSent = tx.vin.some((input: TransactionInput) => input.addr === addressInfo.addrStr);
+
+      // Calculate amounts for this address
+      let receivedAmount = 0;
+      let sentAmount = 0;
+      const toAddresses: string[] = [];
+      const fromAddresses: string[] = [];
+
+      if (isReceived) {
+        tx.vout.forEach((out: TransactionOutput) => {
+          if (out.scriptPubKey.addresses?.includes(addressInfo.addrStr)) {
+            const value = parseFloat(out.value);
+            // Validate: skip NaN, Infinity, and negative values
+            if (isFinite(value) && value >= 0) {
+              receivedAmount += value;
+            }
+          }
+        });
+      }
+
+      if (isSent) {
+        tx.vin.forEach((input: TransactionInput) => {
+          if (input.addr === addressInfo.addrStr) {
+            // Validate: skip NaN, Infinity, and negative values
+            if (isFinite(input.value) && input.value >= 0) {
+              sentAmount += input.value;
+            }
+          }
+        });
+      }
+
+      // Collect ALL input addresses (for determining source of received funds)
+      tx.vin.forEach((input: TransactionInput) => {
+        if (input.addr && !fromAddresses.includes(input.addr) && input.addr !== addressInfo.addrStr) {
+          fromAddresses.push(input.addr);
+        }
+      });
+
+      // Get unique to addresses (excluding current address)
+      tx.vout.forEach((out: TransactionOutput) => {
+        out.scriptPubKey.addresses?.forEach((addr) => {
+          if (!toAddresses.includes(addr) && addr !== addressInfo.addrStr) {
+            toAddresses.push(addr);
+          }
+        });
+      });
+
+      const netAmount = receivedAmount - sentAmount;
+
+      // Determine transaction type and labels
+      let txType: string;
+      let amount: number;
+      let notes = "";
+      let fromAddr = "";
+      let toAddr = "";
+
+      // Simplified logic: just Receive or Send based on net amount
+      if (netAmount > 0) {
+        // Net positive = Received money
+        txType = "Receive";
+        amount = netAmount;
+        fromAddr = fromAddresses.length > 0 ? fromAddresses[0] : "Coinbase";
+        toAddr = addressInfo.addrStr;
+
+        // Add helpful note for FluxNode rewards
+        if (fromAddr === "Coinbase") {
+          if (amount === 2.8125) {
+            notes = "FluxNode Reward - CUMULUS";
+          } else if (amount === 4.6875) {
+            notes = "FluxNode Reward - NIMBUS";
+          } else if (amount === 11.25) {
+            notes = "FluxNode Reward - STRATUS";
+          } else {
+            notes = "Block Reward";
+          }
+        }
+      } else if (netAmount < 0) {
+        // Net negative = Sent money (includes change transactions)
+        txType = "Send";
+        amount = Math.abs(netAmount);
+        fromAddr = addressInfo.addrStr;
+
+        // Handle multiple outputs (e.g., mining pool payouts)
+        if (toAddresses.length > 1) {
+          toAddr = `${toAddresses.length} recipients`;
+          notes = `Split to ${toAddresses.length} addresses: ${toAddresses.slice(0, 3).join(', ')}${toAddresses.length > 3 ? '...' : ''}`;
+        } else {
+          toAddr = toAddresses.length > 0 ? toAddresses[0] : "";
+        }
+      } else {
+        // Net zero = No economic impact (likely dust or self-transfer)
+        txType = "Send";
+        amount = 0;
+        notes = "No net change";
+        fromAddr = addressInfo.addrStr;
+        toAddr = addressInfo.addrStr;
+      }
+
+      // Return enriched transaction with labels
+      return {
+        // Original transaction data
+        ...tx,
+        // Enriched metadata
+        metadata: {
+          date: date.toISOString(),
+          dateFormatted: format(date, "yyyy-MM-dd HH:mm:ss"),
+          type: txType,
+          amount: parseFloat(amount.toFixed(8)),
+          netAmount: parseFloat(netAmount.toFixed(8)),
+          receivedAmount: parseFloat(receivedAmount.toFixed(8)),
+          sentAmount: parseFloat(sentAmount.toFixed(8)),
+          currency: "FLUX",
+          fromAddress: fromAddr,
+          toAddress: toAddr,
+          notes: notes || undefined,
+          allFromAddresses: fromAddresses,
+          allToAddresses: toAddresses,
+          outputCount: tx.vout.length,
+          inputCount: tx.vin.length,
+          recipientCount: toAddresses.length,
+        }
+      };
+    });
+
+    const jsonContent = JSON.stringify(enrichedTxs, null, 2);
+    const blob = new Blob([jsonContent], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+
+    // Generate filename: add part number if multiple files
+    const filename = totalFiles > 1
+      ? `flux-address-${addressInfo.addrStr}-part${fileNum}of${totalFiles}.json`
+      : `flux-address-${addressInfo.addrStr}.json`;
+
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -408,23 +683,23 @@ export function AddressTransactions({ addressInfo }: AddressTransactionsProps) {
             <Button
               variant="outline"
               size="sm"
-              onClick={handleExportCSV}
+              onClick={() => setShowExportOptions(showExportOptions === 'csv' ? null : 'csv')}
               disabled={!transactions.length || isExporting}
               className="gap-2"
               title="Export CSV for tax reporting (compatible with Koinly, CoinTracker, etc.)"
             >
               <Download className="h-4 w-4" />
-              {isExporting ? "Exporting..." : "Export CSV"}
+              Export CSV
             </Button>
             <Button
               variant="outline"
               size="sm"
-              onClick={handleExportJSON}
+              onClick={() => setShowExportOptions(showExportOptions === 'json' ? null : 'json')}
               disabled={!transactions.length || isExporting}
               className="gap-2"
             >
               <FileText className="h-4 w-4" />
-              {isExporting ? "Exporting..." : "Export JSON"}
+              Export JSON
             </Button>
           </div>
         </div>
@@ -434,6 +709,122 @@ export function AddressTransactions({ addressInfo }: AddressTransactionsProps) {
           {addressInfo.unconfirmedTxApperances > 0 &&
             ` (${addressInfo.unconfirmedTxApperances} pending)`}
         </p>
+
+        {/* Export Options Panel */}
+        {showExportOptions && (
+          <div className="mt-4 p-4 border rounded-lg bg-muted/30 space-y-4">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-medium">
+                  Number of transactions to export
+                </label>
+                <span className="text-sm text-muted-foreground">
+                  {exportLimit === 0 ? 'All' : exportLimit.toLocaleString()} of {totalTransactions.toLocaleString()}
+                </span>
+              </div>
+
+              {/* Slider */}
+              <input
+                type="range"
+                min="0"
+                max={totalTransactions}
+                step={Math.max(1, Math.floor(totalTransactions / 100))}
+                value={exportLimit}
+                onChange={(e) => setExportLimit(parseInt(e.target.value))}
+                className="w-full h-2 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary"
+              />
+
+              {/* Quick selection buttons */}
+              <div className="flex gap-2 flex-wrap">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setExportLimit(100)}
+                  disabled={totalTransactions < 100}
+                >
+                  Last 100
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setExportLimit(500)}
+                  disabled={totalTransactions < 500}
+                >
+                  Last 500
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setExportLimit(1000)}
+                  disabled={totalTransactions < 1000}
+                >
+                  Last 1,000
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setExportLimit(5000)}
+                  disabled={totalTransactions < 5000}
+                >
+                  Last 5,000
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setExportLimit(0)}
+                >
+                  All
+                </Button>
+              </div>
+
+              {/* Manual input */}
+              <div className="flex items-center gap-2">
+                <label className="text-sm text-muted-foreground">Or enter exact amount:</label>
+                <input
+                  type="number"
+                  min="1"
+                  max={totalTransactions}
+                  value={exportLimit === 0 ? '' : exportLimit}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value);
+                    setExportLimit(isNaN(val) ? 0 : Math.min(val, totalTransactions));
+                  }}
+                  placeholder="All"
+                  className="w-32 px-3 py-1.5 text-sm border rounded-md bg-background"
+                />
+              </div>
+            </div>
+
+            {/* Action buttons */}
+            <div className="flex gap-2 pt-2 border-t">
+              <Button
+                variant="default"
+                size="sm"
+                onClick={showExportOptions === 'csv' ? handleExportCSV : handleExportJSON}
+                className="gap-2"
+              >
+                {showExportOptions === 'csv' ? (
+                  <>
+                    <Download className="h-4 w-4" />
+                    Export CSV
+                  </>
+                ) : (
+                  <>
+                    <FileText className="h-4 w-4" />
+                    Export JSON
+                  </>
+                )}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowExportOptions(null)}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
       </CardHeader>
       <CardContent>
         {/* Export Progress Bar */}

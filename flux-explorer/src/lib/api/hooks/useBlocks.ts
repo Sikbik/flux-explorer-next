@@ -3,11 +3,13 @@
  *
  * Provides hooks for fetching and managing block data with
  * automatic caching, refetching, and error handling.
+ * Now with adaptive polling based on API configuration.
  */
 
 import { useQuery, UseQueryOptions, UseQueryResult } from "@tanstack/react-query";
-import { InsightAPI } from "../client";
 import type { Block, BlockSummary } from "@/types/flux-api";
+import { getApiConfig } from "../config";
+import ky from "ky";
 
 /**
  * Query keys for block operations
@@ -38,11 +40,14 @@ export function useBlock(
   hashOrHeight: string | number,
   options?: Omit<UseQueryOptions<Block, Error>, "queryKey" | "queryFn">
 ): UseQueryResult<Block, Error> {
+  const config = getApiConfig();
+  const identifier = encodeURIComponent(String(hashOrHeight));
+
   return useQuery<Block, Error>({
     queryKey: blockKeys.detail(hashOrHeight),
-    queryFn: () => InsightAPI.getBlock(hashOrHeight),
+    queryFn: () => ky.get(`/api/blocks/${identifier}`).json<Block>(),
     enabled: !!hashOrHeight,
-    staleTime: 5 * 60 * 1000, // 5 minutes - blocks don't change
+    staleTime: config.staleTime, // Use dynamic stale time
     ...options,
   });
 }
@@ -66,11 +71,19 @@ export function useRawBlock(
   hashOrHeight: string | number,
   options?: Omit<UseQueryOptions<{ rawblock: string }, Error>, "queryKey" | "queryFn">
 ): UseQueryResult<{ rawblock: string }, Error> {
+  const config = getApiConfig();
+  const identifier = encodeURIComponent(String(hashOrHeight));
+
   return useQuery<{ rawblock: string }, Error>({
     queryKey: blockKeys.raw(hashOrHeight),
-    queryFn: () => InsightAPI.getRawBlock(hashOrHeight),
+    queryFn: () =>
+      ky
+        .get(`/api/blocks/${identifier}`, {
+          searchParams: { raw: "true" },
+        })
+        .json<{ rawblock: string }>(),
     enabled: !!hashOrHeight,
-    staleTime: 5 * 60 * 1000,
+    staleTime: config.staleTime, // Use dynamic stale time
     ...options,
   });
 }
@@ -91,17 +104,26 @@ export function useBlockIndex(
   height: number,
   options?: Omit<UseQueryOptions<BlockSummary, Error>, "queryKey" | "queryFn">
 ): UseQueryResult<BlockSummary, Error> {
+  const config = getApiConfig();
+  const identifier = encodeURIComponent(String(height));
+
   return useQuery<BlockSummary, Error>({
     queryKey: blockKeys.index(height),
-    queryFn: () => InsightAPI.getBlockIndex(height),
+    queryFn: () =>
+      ky
+        .get(`/api/blocks/${identifier}`, {
+          searchParams: { summary: "true" },
+        })
+        .json<BlockSummary>(),
     enabled: height > 0,
-    staleTime: 5 * 60 * 1000,
+    staleTime: config.staleTime, // Use dynamic stale time
     ...options,
   });
 }
 
 /**
  * Hook to fetch latest blocks
+ * Uses adaptive polling interval based on API configuration
  *
  * @param limit - Number of blocks to fetch (default: 10)
  * @param options - React Query options
@@ -116,11 +138,19 @@ export function useLatestBlocks(
   limit: number = 10,
   options?: Omit<UseQueryOptions<BlockSummary[], Error>, "queryKey" | "queryFn">
 ): UseQueryResult<BlockSummary[], Error> {
+  const config = getApiConfig();
+  const effectiveLimit = Math.max(1, Math.floor(limit));
+
   return useQuery<BlockSummary[], Error>({
-    queryKey: blockKeys.list(limit),
-    queryFn: () => InsightAPI.getLatestBlocks(limit),
-    staleTime: 5 * 1000, // 5 seconds - new blocks come frequently
-    refetchInterval: 10 * 1000, // Refetch every 10 seconds
+    queryKey: blockKeys.list(effectiveLimit),
+    queryFn: () =>
+      ky
+        .get("/api/blocks/latest", {
+          searchParams: { limit: effectiveLimit.toString() },
+        })
+        .json<BlockSummary[]>(),
+    staleTime: Math.min(config.staleTime, 5000), // Max 5s stale time for latest blocks
+    refetchInterval: config.refetchInterval, // Use dynamic refetch interval (3s local, 30s public)
     ...options,
   });
 }
